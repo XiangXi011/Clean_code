@@ -1,0 +1,345 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>洁净度测量系统 (最终修复版)</title>
+    <!-- 引入Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- 引入Lucide图标库 -->
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <style>
+        /* 自定义样式和动画 */
+        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif; }
+        .tab-button-active { color: #2563eb; background-color: #dbeafe; font-weight: 600; }
+        .modal-enter { opacity: 0; transform: scale(0.95); }
+        .modal-enter-active { opacity: 1; transform: scale(1); transition: all 0.2s ease-out; }
+        .modal-leave-active { opacity: 0; transform: scale(0.95); transition: all 0.2s ease-in; }
+        .progress-bar-inner { transition: width 0.5s ease-in-out; }
+        .toast-enter { opacity: 0; transform: translateY(-20px); }
+        .toast-enter-active { opacity: 1; transform: translateY(0); transition: all 0.3s ease-out; }
+        .toast-leave-active { opacity: 0; transform: translateY(-20px); transition: all 0.3s ease-in; }
+        .loader { border: 4px solid #f3f3f3; border-top: 4px solid #3498db; border-radius: 50%; width: 24px; height: 24px; animation: spin 1s linear infinite; }
+        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+    </style>
+</head>
+<body class="bg-gray-100">
+
+    <div id="app" class="max-w-lg mx-auto bg-white shadow-lg min-h-screen">
+        
+        <header class="bg-white border-b border-gray-200 p-4 sticky top-0 z-10">
+            <h1 class="text-xl font-bold text-gray-800">洁净度测量系统</h1>
+        </header>
+
+        <nav class="flex justify-around bg-white p-2 border-b sticky top-[68px] z-10">
+            <button data-view="dashboard" class="tab-button flex-1 text-center py-2 px-4 rounded-md font-semibold text-gray-600">看板</button>
+            <button data-view="plan" class="tab-button flex-1 text-center py-2 px-4 rounded-md font-semibold text-gray-600">今日计划</button>
+            <button data-view="furnace" class="tab-button flex-1 text-center py-2 px-4 rounded-md font-semibold text-gray-600">固化炉</button>
+            <button data-view="history" class="tab-button flex-1 text-center py-2 px-4 rounded-md font-semibold text-gray-600">历史记录</button>
+        </nav>
+        
+        <main class="p-4" id="main-content">
+            <!-- 视图会在这里动态渲染 -->
+        </main>
+
+    </div>
+
+    <!-- 数据录入模态框 -->
+    <div id="modal" class="fixed inset-0 bg-black bg-opacity-60 flex items-center justify-center p-4 z-50 hidden modal-enter">
+        <div class="bg-white rounded-lg shadow-xl w-full max-w-sm p-6">
+            <h3 class="text-lg font-bold text-gray-800">记录测量数据</h3>
+            <p id="modal-task-name" class="text-gray-600 mt-1 mb-6"></p>
+            <div class="space-y-4">
+                <div><label for="value-03" class="block text-sm font-medium text-gray-700">0.3um 测量值</label><input type="number" id="value-03" placeholder="请输入0.3um数值" class="mt-1 block w-full border border-gray-300 rounded-md shadow-sm py-2 px-3 focus:outline-none focus:ring-blue-500 focus:border-blue-500"></div>
+                <div><label for="value-05" class="block text-sm font-medium text-gray-700">0.5um 测量值</label><input type="number" id="value-05" placeholder="请输入0.5um数值" class="mt-1 block w-full border border-gray-300 rounded-md shadow-sm py-2 px-3 focus:outline-none focus:ring-blue-500 focus:border-blue-500"></div>
+                <div><label for="value-50" class="block text-sm font-medium text-gray-700">5.0um 测量值</label><input type="number" id="value-50" placeholder="请输入5.0um数值" class="mt-1 block w-full border border-gray-300 rounded-md shadow-sm py-2 px-3 focus:outline-none focus:ring-blue-500 focus:border-blue-500"></div>
+            </div>
+            <div class="mt-8 flex justify-end space-x-3"><button id="modal-cancel" class="px-4 py-2 bg-gray-200 text-gray-800 rounded-md hover:bg-gray-300">取消</button><button id="modal-submit" class="px-4 py-2 bg-blue-600 text-white font-semibold rounded-md hover:bg-blue-700 flex items-center justify-center min-w-[80px]"><span class="btn-text">提交</span><span class="loader hidden"></span></button></div>
+        </div>
+    </div>
+
+    <!-- 全局通知 Toast -->
+    <div id="toast" class="fixed top-5 right-5 text-white py-2 px-4 rounded-lg shadow-lg hidden toast-enter max-w-sm">
+        <div class="flex items-center"><i data-lucide="check-circle" class="w-5 h-5 mr-2 flex-shrink-0"></i><span id="toast-message" class="break-words"></span></div>
+    </div>
+
+    <script>
+    document.addEventListener('DOMContentLoaded', () => {
+        const API_BASE_URL = '';
+        let state = { currentView: 'dashboard', selectedTask: null };
+
+        // 缓存所有需要操作的DOM元素
+        const elements = {
+            mainContent: document.getElementById('main-content'),
+            tabButtons: document.querySelectorAll('.tab-button'),
+            modal: document.getElementById('modal'),
+            modalSubmit: document.getElementById('modal-submit'),
+            modalCancel: document.getElementById('modal-cancel'),
+            modalTaskName: document.getElementById('modal-task-name'),
+            modalValue03: document.getElementById('value-03'),
+            modalValue05: document.getElementById('value-05'),
+            modalValue50: document.getElementById('value-50'),
+            toast: document.getElementById('toast'),
+            toastMessage: document.getElementById('toast-message'),
+        };
+
+        // 统一的API请求函数，增加了健壮的错误处理
+        const api = {
+            get: async (endpoint) => {
+                const response = await fetch(`${API_BASE_URL}${endpoint}`);
+                const data = await response.json();
+                if (!response.ok) {
+                    throw new Error(data.error || `服务器错误，状态码: ${response.status}`);
+                }
+                return data;
+            },
+            post: async (endpoint, body) => {
+                const response = await fetch(`${API_BASE_URL}${endpoint}`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(body)
+                });
+                return response.json();
+            }
+        };
+
+        // --- 核心渲染函数 ---
+        const render = async () => {
+            updateTabs();
+            elements.mainContent.innerHTML = '<div class="text-center py-10"><div class="loader inline-block"></div></div>';
+            
+            try {
+                let viewHTML = '';
+                switch (state.currentView) {
+                    case 'dashboard': viewHTML = await renderDashboardView(); break;
+                    case 'plan': viewHTML = await renderPlanView(); break;
+                    case 'furnace': viewHTML = await renderFurnaceView(); break;
+                    case 'history': viewHTML = renderHistoryView(); break;
+                }
+                elements.mainContent.innerHTML = viewHTML;
+            } catch (error) {
+                console.error("渲染视图时发生错误:", error);
+                elements.mainContent.innerHTML = createErrorStateHTML(error.message);
+            }
+            lucide.createIcons();
+        };
+        
+        // --- 各个视图的HTML生成器 (完整版) ---
+        const renderDashboardView = async () => {
+            const data = await api.get('/api/dashboard');
+            return `
+                <div class="space-y-4">
+                    <div class="bg-white p-4 rounded-lg shadow border border-gray-200">
+                        <div class="flex items-center text-gray-700">
+                            <i data-lucide="clipboard-check" class="w-6 h-6 mr-3 text-blue-500"></i>
+                            <h3 class="text-lg font-semibold">今日任务进度</h3>
+                        </div>
+                        <div class="mt-3">
+                            <div class="flex justify-between items-center mb-1">
+                                <span class="text-sm font-medium text-gray-600">完成情况</span>
+                                <span class="text-sm font-bold text-blue-600">${data.daily.completed} / ${data.daily.total} 项</span>
+                            </div>
+                            <div class="w-full bg-gray-200 rounded-full h-2.5">
+                                <div class="bg-blue-500 h-2.5 rounded-full progress-bar-inner" style="width: ${data.daily.percentage}%"></div>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="bg-white p-4 rounded-lg shadow border border-gray-200">
+                        <div class="flex items-center text-gray-700">
+                            <i data-lucide="box" class="w-6 h-6 mr-3 text-green-500"></i>
+                            <h3 class="text-lg font-semibold">本月固化炉进度</h3>
+                        </div>
+                        <div class="mt-3">
+                            <div class="flex justify-between items-center mb-1">
+                                <span class="text-sm font-medium text-gray-600">已测量</span>
+                                <span class="text-sm font-bold text-green-600">${data.furnace.completed} / ${data.furnace.total} 台</span>
+                            </div>
+                            <div class="w-full bg-gray-200 rounded-full h-2.5">
+                                <div class="bg-green-500 h-2.5 rounded-full progress-bar-inner" style="width: ${data.furnace.percentage}%"></div>
+                            </div>
+                        </div>
+                    </div>
+                </div>`;
+        };
+
+        const renderPlanView = async () => {
+            const tasks = await api.get('/api/tasks/pending');
+            let content = `<h2 class="text-lg font-semibold text-gray-700 mb-3">今日计划任务</h2><ul class="space-y-3">${tasks.map(createTaskItemHTML).join('')}</ul>`;
+            if (tasks.length === 0) content += createEmptyStateHTML('今日计划已全部完成！');
+            return content;
+        };
+
+        const renderFurnaceView = async () => {
+            const furnaces = await api.get('/api/furnaces/pending');
+            const furnaceTasks = furnaces.map(f => ({
+                id: f.furnace_id, type: '固化炉', name: f.name,
+                subtext: f.last_measured ? `上次: ${f.last_measured}` : '从未测量'
+            }));
+            let content = `<h2 class="text-lg font-semibold text-gray-700 mb-3">本月待测固化炉</h2><ul class="space-y-3">${furnaceTasks.map(createTaskItemHTML).join('')}</ul>`;
+            if (furnaceTasks.length === 0) content += createEmptyStateHTML('本月固化炉已全部测量！');
+            return content;
+        };
+
+        const renderHistoryView = () => {
+            const today = new Date().toISOString().slice(0, 10);
+            return `
+                <h2 class="text-lg font-semibold text-gray-700 mb-4">查询历史测量记录</h2>
+                <div class="bg-gray-50 p-4 rounded-lg border space-y-3">
+                    <div class="grid grid-cols-2 gap-3">
+                        <div><label for="start-date" class="block text-sm font-medium text-gray-700">开始日期</label><input type="date" id="start-date" value="${today}" class="mt-1 block w-full border-gray-300 rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500"></div>
+                        <div><label for="end-date" class="block text-sm font-medium text-gray-700">结束日期</label><input type="date" id="end-date" value="${today}" class="mt-1 block w-full border-gray-300 rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500"></div>
+                    </div>
+                    <button id="query-history-btn" class="w-full flex justify-center items-center px-4 py-2 bg-blue-600 text-white font-semibold rounded-md hover:bg-blue-700"><i data-lucide="search" class="w-5 h-5 mr-2"></i><span>查询</span></button>
+                </div>
+                <div id="history-results-container" class="mt-6"></div>`;
+        };
+        
+        // --- 事件处理函数 ---
+        const handleTabClick = (view) => { state.currentView = view; render(); };
+
+        const handleHistoryQuery = async () => {
+            const startDate = document.getElementById('start-date').value;
+            const endDate = document.getElementById('end-date').value;
+            if (!startDate || !endDate) { alert('请选择开始和结束日期'); return; }
+            
+            const btn = document.getElementById('query-history-btn');
+            const resultsContainer = document.getElementById('history-results-container');
+            
+            btn.disabled = true;
+            btn.innerHTML = `<div class="loader"></div>`;
+            resultsContainer.innerHTML = '';
+
+            try {
+                const results = await api.get(`/api/history?start_date=${startDate}&end_date=${endDate}`);
+                let resultsHTML = '<h3 class="text-md font-semibold text-gray-700 mb-3">查询结果</h3>';
+                if (results.length === 0) {
+                    resultsHTML += createEmptyStateHTML('该时间范围内没有找到测量记录。');
+                } else {
+                    resultsHTML += `<ul class="space-y-3">${results.map(createHistoryItemHTML).join('')}</ul>`;
+                }
+                resultsContainer.innerHTML = resultsHTML;
+            } catch (error) {
+                resultsContainer.innerHTML = createErrorStateHTML(error.message);
+            } finally {
+                btn.disabled = false;
+                btn.innerHTML = `<i data-lucide="search" class="w-5 h-5 mr-2"></i><span>查询</span>`;
+                lucide.createIcons();
+            }
+        };
+
+        const handleSubmit = async (e) => {
+            const button = e.currentTarget;
+            const btnText = button.querySelector('.btn-text');
+            const loader = button.querySelector('.loader');
+            
+            button.disabled = true;
+            btnText.classList.add('hidden');
+            loader.classList.remove('hidden');
+
+            const values = { value_03: elements.modalValue03.value, value_05: elements.modalValue05.value, value_50: elements.modalValue50.value };
+            if (!values.value_03 || !values.value_05 || !values.value_50) {
+                alert('请填写所有三个测量值！');
+                button.disabled = false; btnText.classList.remove('hidden'); loader.classList.add('hidden');
+                return;
+            }
+            
+            const { id, type } = state.selectedTask;
+            const endpoint = type === '固化炉' ? `/api/furnaces/${id}/record` : `/api/tasks/${id}/record`;
+            const response = await api.post(endpoint, values);
+
+            if (response.message) {
+                showToast('操作成功！');
+                closeModal();
+                render();
+            } else {
+                showToast(response.error || '操作失败', true);
+            }
+
+            button.disabled = false;
+            btnText.classList.remove('hidden');
+            loader.classList.add('hidden');
+        };
+
+        // --- 统一的事件监听（事件代理） ---
+        const addEventListeners = () => {
+            elements.tabButtons.forEach(button => button.addEventListener('click', () => handleTabClick(button.dataset.view)));
+            elements.modalSubmit.addEventListener('click', handleSubmit);
+            elements.modalCancel.addEventListener('click', closeModal);
+
+            elements.mainContent.addEventListener('click', (e) => {
+                const recordBtn = e.target.closest('.record-btn');
+                if (recordBtn) {
+                    state.selectedTask = { id: recordBtn.dataset.taskId, type: recordBtn.dataset.taskType, name: recordBtn.dataset.taskName };
+                    elements.modalTaskName.textContent = `为 [${state.selectedTask.name}] 记录`;
+                    [elements.modalValue03, elements.modalValue05, elements.modalValue50].forEach(el => el.value = '');
+                    openModal();
+                    return;
+                }
+                const queryBtn = e.target.closest('#query-history-btn');
+                if (queryBtn) {
+                    handleHistoryQuery();
+                    return;
+                }
+            });
+        };
+
+        // --- 辅助函数和HTML模板 (完整版) ---
+        const createTaskItemHTML = (task) => {
+            const iconMap = { '大环境': 'building-2', '层流棚': 'wind', '加硬机': 'server', '固化炉': 'box' };
+            const taskId = task.task_id || task.id;
+            const taskName = task.point_name || task.name;
+            return `<li class="bg-white border border-gray-200 rounded-lg p-3 flex items-center justify-between"><div class="flex items-center min-w-0"><div class="mr-4 text-blue-500"><i data-lucide="${iconMap[task.type] || 'clipboard-list'}" class="w-6 h-6"></i></div><div class="truncate"><p class="font-semibold text-gray-800 truncate">${taskName}</p><p class="text-sm text-gray-500">${task.subtext || '待测量'}</p></div></div><button data-task-id="${taskId}" data-task-type="${task.type}" data-task-name="${taskName}" class="record-btn flex-shrink-0 ml-2 px-4 py-2 bg-blue-500 hover:bg-blue-600 text-white text-sm font-semibold rounded-md">记录</button></li>`;
+        };
+        const createHistoryItemHTML = (item) => `
+            <li class="bg-white border border-gray-200 rounded-lg p-3">
+                <div class="flex justify-between items-start"><div class="min-w-0"><p class="font-semibold text-gray-800 truncate">${item.point_name}</p><p class="text-sm text-gray-500">${item.measure_time}</p></div><span class="flex-shrink-0 ml-2 text-xs font-medium px-2 py-1 rounded-full ${item.location_type === '固化炉' ? 'bg-green-100 text-green-800' : 'bg-blue-100 text-blue-800'}">${item.location_type}</span></div>
+                <div class="mt-2 pt-2 border-t grid grid-cols-3 text-center text-sm"><div><span class="text-gray-500">0.3um:</span> <span class="font-semibold">${item.value_03}</span></div><div><span class="text-gray-500">0.5um:</span> <span class="font-semibold">${item.value_05}</span></div><div><span class="text-gray-500">5.0um:</span> <span class="font-semibold">${item.value_50}</span></div></div>
+            </li>`;
+        const createEmptyStateHTML = (text) => `<div class="text-center py-10"><i data-lucide="check-circle-2" class="w-16 h-16 text-green-500 mx-auto"></i><p class="mt-4 text-gray-600">${text}</p></div>`;
+        const createErrorStateHTML = (text) => `<div class="text-center py-10"><i data-lucide="alert-triangle" class="w-16 h-16 text-red-500 mx-auto"></i><p class="mt-4 font-semibold text-gray-700">加载失败</p><p class="mt-2 text-sm text-gray-500 break-words">${text}</p></div>`;
+        
+        const showToast = (message, isError = false) => {
+            const toastIcon = elements.toast.querySelector('i');
+            elements.toast.className = `fixed top-5 right-5 text-white py-2 px-4 rounded-lg shadow-lg toast-enter max-w-sm ${isError ? 'bg-red-500' : 'bg-green-500'}`;
+            toastIcon.setAttribute('data-lucide', isError ? 'alert-circle' : 'check-circle');
+            lucide.createIcons();
+            elements.toastMessage.textContent = message;
+            elements.toast.classList.remove('hidden');
+            setTimeout(() => elements.toast.classList.remove('toast-enter'), 10);
+            setTimeout(() => {
+                elements.toast.classList.add('toast-leave-active');
+                setTimeout(() => {
+                    elements.toast.classList.add('hidden', 'toast-enter');
+                    elements.toast.classList.remove('toast-leave-active');
+                }, 300);
+            }, 3000);
+        };
+        const openModal = () => { elements.modal.classList.remove('hidden'); setTimeout(() => elements.modal.classList.remove('modal-enter'), 10); elements.modalValue03.focus(); };
+        const closeModal = () => {
+            elements.modal.classList.add('modal-leave-active');
+            setTimeout(() => {
+                elements.modal.classList.add('hidden', 'modal-enter');
+                elements.modal.classList.remove('modal-leave-active');
+            }, 200);
+        };
+        const updateTabs = () => {
+            elements.tabButtons.forEach(button => {
+                button.classList.toggle('tab-button-active', button.dataset.view === state.currentView);
+                button.classList.toggle('text-gray-600', button.dataset.view !== state.currentView);
+            });
+        };
+
+        // --- 应用初始化 ---
+        const init = () => {
+            addEventListeners();
+            handleTabClick('dashboard'); // 加载默认视图
+        };
+
+        init(); // 启动应用
+    });
+    </script>
+</body>
+</html>
+
+
+
