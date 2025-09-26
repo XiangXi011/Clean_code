@@ -1,4 +1,8 @@
 # 导入 mysql.connector 之前先尝试导入配置，这样可以先捕获配置错误
+from dotenv import load_dotenv
+load_dotenv()
+print("✅ .env 文件已加载")
+
 try:
     from config import Config
 except ValueError as e:
@@ -19,6 +23,11 @@ FURNACES = [
 ]
 
 def main():
+    print("🎯 main() 已调用")
+    print("📌 即将连接的数据库信息:")
+    print(f"   HOST: {Config.DB_HOST}:{Config.DB_PORT}")
+    print(f"   USER: {Config.DB_USER}")
+    print(f"   DB  : {Config.DB_NAME}")
     """
     主函数，用于连接数据库并填充固化炉主数据。
     这是一个【一次性】的设置脚本，只需成功运行一次即可。
@@ -40,6 +49,8 @@ def main():
         print("正在填充固化炉主数据...")
         insert_furnace_query = "INSERT IGNORE INTO furnaces (name) VALUES (%s)"
         furnace_data = [(name,) for name in FURNACES]
+        print("即将插入", len(furnace_data), "条数据")
+        print("前 5 条:", furnace_data[:5])
         cursor.executemany(insert_furnace_query, furnace_data)
         db_conn.commit()
         print(f"✅ 完成! {cursor.rowcount} 条新的固化炉数据被插入。")
@@ -59,3 +70,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+    
