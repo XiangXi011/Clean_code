@@ -127,6 +127,9 @@
         // --- 各个视图的HTML生成器 (完整版) ---
         const renderDashboardView = async () => {
             const data = await api.get('/api/dashboard');
+            if (!data.daily || !data.furnace) {
+                throw new Error("从服务器返回的仪表盘数据格式不正确。");
+            }
             return `
                 <div class="space-y-4">
                     <div class="bg-white p-4 rounded-lg shadow border border-gray-200">
@@ -244,10 +247,10 @@
             }
             
             const { id, type } = state.selectedTask;
-            const endpoint = type === '固化炉' ? `/api/furnaces/${id}/record` : `/api/tasks/${id}/record`;
+            const endpoint = type === '固化炉' ? `/api/furnaces/${id}/measure` : `/api/tasks/${id}/record`;
             const response = await api.post(endpoint, values);
 
-            if (response.message) {
+            if (response.success) {
                 showToast('操作成功！');
                 closeModal();
                 render();
@@ -340,6 +343,3 @@
     </script>
 </body>
 </html>
-
-
-

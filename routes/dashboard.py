@@ -1,55 +1,52 @@
 from flask import Blueprint, jsonify
 from db import query_db
-from datetime import datetime
 
 dashboard_bp = Blueprint('dashboard_bp', __name__, url_prefix='/api/dashboard')
 
 @dashboard_bp.route('/', methods=['GET'])
 def get_dashboard_data():
-    """获取看板所需的所有统计数据"""
-    today_str = datetime.now().strftime('%Y-%m-%d')
-    
+    """获取看板数据，包括今日任务进度和本月固化炉测量进度"""
     try:
-        # 1. 今日任务进度
-        daily_total_res = query_db("SELECT COUNT(*) as total FROM daily_tasks WHERE measure_date = %s", (today_str,), one=True)
-        daily_completed_res = query_db("SELECT COUNT(*) as completed FROM daily_tasks WHERE measure_date = %s AND status = '已完成'", (today_str,), one=True)
-        daily_total = daily_total_res['total'] if daily_total_res else 0
-        daily_completed = daily_completed_res['completed'] if daily_completed_res else 0
+        # 获取今日任务进度 - 修复了列名错误 (task_date -> measure_date)
+        daily_stats_query = query_db(
+            "SELECT COUNT(*) as total, SUM(IF(status = '已完成', 1, 0)) as completed FROM daily_tasks WHERE DATE(measure_date) = CURDATE()",
+            one=True
+        )
+        # 如果查询结果为空，则提供默认值
+        if not daily_stats_query or daily_stats_query.get('total') is None:
+            daily_stats = {'total': 0, 'completed': 0}
+        else:
+            daily_stats = {
+                'total': daily_stats_query.get('total', 0),
+                'completed': int(daily_stats_query.get('completed', 0) or 0)
+            }
         
-        # 2. 本月固化炉进度
-        furnace_total_res = query_db("SELECT COUNT(*) as total FROM furnaces", one=True)
-        # 修复: 将 % 替换为 %% 以避免与 Python 的字符串格式化冲突
-        furnace_completed_res = query_db("SELECT COUNT(*) as completed FROM furnaces WHERE DATE_FORMAT(last_measured, '%%Y-%%m') = DATE_FORMAT(CURDATE(), '%%Y-%%m')", one=True)
-        furnace_total = furnace_total_res['total'] if furnace_total_res else 0
-        furnace_completed = furnace_completed_res['completed'] if furnace_completed_res else 0
-        
-        # 3. 今日完成分类
-        category_summary_res = query_db("""
-            SELECT location_type, COUNT(*) as count
-            FROM daily_tasks
-            WHERE measure_date = %s AND status = '已完成'
-            GROUP BY location_type
-        """, (today_str,))
-        
-        category_summary = {item['location_type']: item['count'] for item in category_summary_res} if category_summary_res else {}
-        # 确保所有类别都存在
-        for cat in ['大环境', '层流棚', '加硬机']:
-            if cat not in category_summary:
-                category_summary[cat] = 0
+        daily_stats['percentage'] = (daily_stats['completed'] / daily_stats['total'] * 100) if daily_stats['total'] > 0 else 0
 
-        dashboard_data = {
-            "dailyTotal": daily_total,
-            "dailyCompleted": daily_completed,
-            "dailyPercentage": (daily_completed / daily_total * 100) if daily_total > 0 else 0,
-            "furnaceTotal": furnace_total,
-            "furnaceCompleted": furnace_completed,
-            "furnacePercentage": (furnace_completed / furnace_total * 100) if furnace_total > 0 else 0,
-            "categorySummary": category_summary
-        }
+        # 获取本月固化炉测量进度 - 使用 IF 替换 CASE 并转义 % 符号
+        furnace_stats_query = query_db(
+            "SELECT COUNT(*) as total, SUM(IF(last_measured IS NOT NULL AND DATE_FORMAT(last_measured, '%%Y-%%m') = DATE_FORMAT(CURDATE(), '%%Y-%%m'), 1, 0)) as completed FROM furnaces",
+            one=True
+        )
+        # 如果查询结果为空，则提供默认值
+        if not furnace_stats_query or furnace_stats_query.get('total') is None:
+            furnace_stats = {'total': 0, 'completed': 0}
+        else:
+            furnace_stats = {
+                'total': furnace_stats_query.get('total', 0),
+                'completed': int(furnace_stats_query.get('completed', 0) or 0)
+            }
 
-        return jsonify(dashboard_data)
+        furnace_stats['percentage'] = (furnace_stats['completed'] / furnace_stats['total'] * 100) if furnace_stats['total'] > 0 else 0
+        
+        return jsonify({'daily': daily_stats, 'furnace': furnace_stats})
+
     except Exception as e:
-        # 打印详细错误到后端控制台，方便调试
         print(f"Error fetching dashboard data: {e}")
-        return jsonify({"error": f"获取仪表盘数据失败: {e}"}), 500
+        # 即使发生异常，也返回一个默认的结构体，防止前端崩溃
+        return jsonify({
+            'daily': {'total': 0, 'completed': 0, 'percentage': 0},
+            'furnace': {'total': 0, 'completed': 0, 'percentage': 0},
+            'error': str(e)
+        }), 500
 
