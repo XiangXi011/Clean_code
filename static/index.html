@@ -65,6 +65,18 @@
         <div class="flex items-center"><i data-lucide="check-circle" class="w-5 h-5 mr-2 flex-shrink-0"></i><span id="toast-message" class="break-words"></span></div>
     </div>
 
+    <!-- Deletion Confirmation Modal -->
+    <div id="confirm-modal" class="fixed inset-0 bg-black bg-opacity-60 flex items-center justify-center p-4 z-50 hidden modal-enter">
+        <div class="bg-white rounded-lg shadow-xl w-full max-w-sm p-6">
+            <h3 class="text-lg font-bold text-gray-800">确认操作</h3>
+            <p id="confirm-message" class="text-gray-600 mt-2 mb-6"></p>
+            <div class="mt-8 flex justify-end space-x-3">
+                <button id="confirm-cancel" class="px-4 py-2 bg-gray-200 text-gray-800 rounded-md hover:bg-gray-300">取消</button>
+                <button id="confirm-ok" class="px-4 py-2 bg-red-600 text-white font-semibold rounded-md hover:bg-red-700">确认删除</button>
+            </div>
+        </div>
+    </div>
+
     <script>
     document.addEventListener('DOMContentLoaded', () => {
         const API_BASE_URL = '';
@@ -82,7 +94,13 @@
             modalValue50: document.getElementById('value-50'),
             toast: document.getElementById('toast'),
             toastMessage: document.getElementById('toast-message'),
+            confirmModal: document.getElementById('confirm-modal'),
+            confirmMessage: document.getElementById('confirm-message'),
+            confirmOk: document.getElementById('confirm-ok'),
+            confirmCancel: document.getElementById('confirm-cancel'),
         };
+
+        let onConfirmCallback = null;
 
         const api = {
             get: async (endpoint) => {
@@ -99,6 +117,16 @@
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify(body)
                 });
+                return response.json();
+            },
+            delete: async (endpoint) => {
+                const response = await fetch(`${API_BASE_URL}${endpoint}`, {
+                    method: 'DELETE',
+                });
+                if (!response.ok) {
+                    const errorData = await response.json().catch(() => ({ error: `服务器错误，状态码: ${response.status}` }));
+                    throw new Error(errorData.error);
+                }
                 return response.json();
             }
         };
@@ -174,7 +202,7 @@
             `;
         };
 
-       const renderPlanView = async () => {
+        const renderPlanView = async () => {
             const summary = await api.get('/api/tasks/summary');
             const { furnace_summary, other_tasks } = summary;
 
@@ -211,7 +239,6 @@
         };
         
         const renderFurnaceView = async () => {
-            // Always fetch the latest furnace data when switching to this view
             state.allFurnaces = await api.get('/api/furnaces/all_status');
             
             return `
@@ -321,22 +348,17 @@
                     value_05: elements.modalValue05.value,
                     value_50: elements.modalValue50.value,
                 };
-                 console.log("正在提交数据...", payload);
                 const result = await api.post('/api/results/add', payload);
 
                 if (result.success) {
-                    console.log("数据提交成功, API返回:", result);
                     submitBtn.classList.remove('bg-blue-600', 'hover:bg-blue-700');
                     submitBtn.classList.add('bg-green-500');
                     loader.classList.add('hidden');
                     btnText.innerHTML = `<i data-lucide="check" class="w-5 h-5"></i>`;
                     lucide.createIcons();
                     btnText.classList.remove('hidden');
-
                     showToast("数据提交成功！");
-
                     setTimeout(() => {
-                        console.log("1秒后, 正在关闭对话框并刷新界面...");
                         closeModal();
                         if (state.currentView === 'furnace' || state.selectedTask.type === '固化炉') {
                             state.allFurnaces = []; 
@@ -345,11 +367,9 @@
                     }, 1000);
 
                 } else {
-                    console.error("提交失败, API返回错误信息:", result.error);
                     throw new Error(result.error || "提交失败");
                 }
             } catch (error) {
-                console.error("提交过程中捕获到错误:", error);
                 showToast(error.message, true);
                 btnText.innerHTML = '提交';
                 btnText.classList.remove('hidden');
@@ -358,11 +378,37 @@
             }
         };
         
-        // --- 统一的事件监听 ---
+        const handleDeleteResult = (resultId) => {
+            openConfirmModal(
+                '您确定要删除这条记录吗？此操作无法撤销。',
+                async () => {
+                    try {
+                        const result = await api.delete(`/api/results/${resultId}`);
+                        if (result.success) {
+                            showToast("记录已成功删除！");
+                            handleHistoryQuery(); // Refresh the list
+                        } else {
+                            throw new Error(result.error || '删除失败');
+                        }
+                    } catch (error) {
+                        showToast(error.message, true);
+                    }
+                }
+            );
+        };
+
         const addEventListeners = () => {
             elements.tabButtons.forEach(button => button.addEventListener('click', () => handleTabClick(button.dataset.view)));
             elements.modalSubmit.addEventListener('click', handleSubmit);
             elements.modalCancel.addEventListener('click', closeModal);
+            elements.confirmCancel.addEventListener('click', closeConfirmModal);
+            elements.confirmOk.addEventListener('click', () => {
+                if (typeof onConfirmCallback === 'function') {
+                    onConfirmCallback();
+                }
+                closeConfirmModal();
+            });
+
 
             elements.mainContent.addEventListener('click', (e) => {
                 const recordBtn = e.target.closest('.record-btn');
@@ -376,6 +422,11 @@
                 const queryBtn = e.target.closest('#query-history-btn');
                 if (queryBtn) {
                     handleHistoryQuery();
+                }
+                 const deleteBtn = e.target.closest('.delete-btn');
+                if (deleteBtn) {
+                    const resultId = deleteBtn.dataset.resultId;
+                    handleDeleteResult(resultId);
                 }
             });
             
@@ -391,7 +442,6 @@
             });
         };
 
-        // --- 辅助函数和HTML模板 ---
         const createTaskItemHTML = (task) => {
             const iconMap = { '大环境': 'building-2', '层流棚': 'wind', '加硬机': 'server', '固化炉': 'box' };
             const taskId = task.task_id || task.id;
@@ -410,9 +460,9 @@
             const iconMap = { '大环境': 'building-2', '层流棚': 'wind', '加硬机': 'server', '固化炉': 'box' };
             return `
                 <li class="bg-white border border-gray-200 rounded-lg p-3">
-                    <div class="flex items-center justify-between">
+                    <div class="flex items-start justify-between">
                         <div class="flex items-center min-w-0">
-                            <div class="mr-4 text-gray-500">
+                            <div class="mr-4 text-gray-500 flex-shrink-0">
                                 <i data-lucide="${iconMap[item.location_type] || 'clipboard-check'}" class="w-6 h-6"></i>
                             </div>
                             <div class="truncate">
@@ -420,6 +470,9 @@
                                 <p class="text-sm text-gray-500">${item.measure_time}</p>
                             </div>
                         </div>
+                         <button data-result-id="${item.result_id}" class="delete-btn flex-shrink-0 ml-2 p-1 text-gray-400 hover:text-red-600 rounded-full hover:bg-red-100 transition-colors">
+                            <i data-lucide="trash-2" class="w-4 h-4"></i>
+                        </button>
                     </div>
                     <div class="mt-3 grid grid-cols-3 text-center border-t pt-2">
                         <div><p class="text-xs text-gray-500">0.3um</p><p class="font-mono text-gray-800">${item.value_03}</p></div>
@@ -469,10 +522,26 @@
             void elements.modal.offsetWidth;
             elements.modal.classList.add('modal-enter-active');
         };
+
         const closeModal = () => { 
             elements.modal.classList.remove('modal-enter-active');
             elements.modal.classList.add('modal-leave-active');
             setTimeout(() => elements.modal.classList.add('hidden'), 200);
+        };
+        
+        const openConfirmModal = (message, callback) => {
+            elements.confirmMessage.textContent = message;
+            onConfirmCallback = callback;
+            elements.confirmModal.classList.remove('hidden', 'modal-enter');
+            void elements.confirmModal.offsetWidth;
+            elements.confirmModal.classList.add('modal-enter-active');
+        };
+
+        const closeConfirmModal = () => {
+            elements.confirmModal.classList.remove('modal-enter-active');
+            elements.confirmModal.classList.add('modal-leave-active');
+            setTimeout(() => elements.confirmModal.classList.add('hidden'), 200);
+            onConfirmCallback = null;
         };
         
         const updateTabs = () => {
