@@ -1,19 +1,10 @@
-# 导入 mysql.connector 之前先尝试导入配置，这样可以先捕获配置错误
-from dotenv import load_dotenv
-load_dotenv()
-print("✅ .env 文件已加载")
-
-try:
-    from config import Config
-except ValueError as e:
-    print(f"❌ 配置文件错误: {e}")
-    print("   请立即检查您的 .env 文件格式是否正确，确保每个变量都独占一行。")
-    exit() # 配置有误，直接退出
-
-import mysql.connector
+import os
+import sys
 import traceback
+import pymysql
+from dotenv import load_dotenv
 
-# 这是您所有固化炉的“主列表”。
+# 这是您所有固化炉的“主列表”（来自代码2）。
 # 这个脚本的唯一目的，就是将这个列表一次性地导入到您的数据库中。
 FURNACES = [
     "A02", "A06", "A07", "A10", "A11", "A12", "A13", "A14", "A15", "A16", "A18", "A21", "A22", "A24", "A25", "A27", "A29",
@@ -23,51 +14,98 @@ FURNACES = [
 ]
 
 def main():
-    print("🎯 main() 已调用")
-    print("📌 即将连接的数据库信息:")
-    print(f"   HOST: {Config.DB_HOST}:{Config.DB_PORT}")
-    print(f"   USER: {Config.DB_USER}")
-    print(f"   DB  : {Config.DB_NAME}")
     """
-    主函数，用于连接数据库并填充固化炉主数据。
+    主函数，用于连接数据库并批量填充固化炉主数据。
     这是一个【一次性】的设置脚本，只需成功运行一次即可。
+    本脚本使用 pymysql 库。
     """
-    db_conn = None
+    print("🎯 main() 已调用")
+
+    # 加载环境变量
+    try:
+        load_dotenv()
+        print("✅ .env 文件已加载")
+    except Exception as e:
+        print(f"❌ .env 文件加载失败: {e}")
+        # 即使加载失败也继续，允许从系统环境变量中读取
+    
+    # 从环境变量读取数据库配置
+    DB_HOST = os.getenv("DB_HOST")
+    DB_PORT = int(os.getenv("DB_PORT", "3306"))
+    DB_USER = os.getenv("DB_USER")
+    DB_PASSWORD = os.getenv("DB_PASSWORD")
+    DB_NAME = os.getenv("DB_NAME")
+
+    print("📌 数据库配置:")
+    print(f"    HOST: {DB_HOST}:{DB_PORT}")
+    print(f"    USER: {DB_USER}")
+    print(f"    DB  : {DB_NAME}")
+
+    conn = None
     try:
         # 建立数据库连接
-        db_conn = mysql.connector.connect(
-            host=Config.DB_HOST,
-            user=Config.DB_USER,
-            password=Config.DB_PASSWORD,
-            database=Config.DB_NAME,
-            port=Config.DB_PORT
+        print("📌 即将连接数据库...")
+        conn = pymysql.connect(
+            host=DB_HOST,
+            port=DB_PORT,
+            user=DB_USER,
+            password=DB_PASSWORD,
+            database=DB_NAME,
+            charset="utf8mb4"
         )
-        cursor = db_conn.cursor()
         print("✅ 数据库连接成功!")
 
+        cursor = conn.cursor()
+
+        # 确保 furnaces 表存在，如果不存在则创建
+        # 注意：实际生产中，表结构通常由迁移工具（如Alembic）管理，这里为了脚本独立性而包含此步骤。
+        print("📌 正在检查 `furnaces` 表...")
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS furnaces (
+                id INT AUTO_INCREMENT PRIMARY KEY,
+                name VARCHAR(100) NOT NULL UNIQUE
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+        """)
+        print("✅ 表 `furnaces` 创建/已存在")
+
         # 填充固化炉主数据
-        print("正在填充固化炉主数据...")
-        insert_furnace_query = "INSERT IGNORE INTO furnaces (name) VALUES (%s)"
-        furnace_data = [(name,) for name in FURNACES]
-        print("即将插入", len(furnace_data), "条数据")
-        print("前 5 条:", furnace_data[:5])
-        cursor.executemany(insert_furnace_query, furnace_data)
-        db_conn.commit()
-        print(f"✅ 完成! {cursor.rowcount} 条新的固化炉数据被插入。")
-        print("   (如果数字为0，说明所有固化炉已存在于数据库中，这也是正常的)")
+        print("📌 正在填充固化炉主数据...")
         
+        # 使用 INSERT IGNORE 来避免因重复数据导致错误，使脚本可重复运行
+        insert_furnace_query = "INSERT IGNORE INTO furnaces (name) VALUES (%s)"
+        
+        # 将列表转换为 executemany 需要的元组列表格式
+        furnace_data = [(name,) for name in FURNACES]
+        
+        print(f"    即将插入 {len(furnace_data)} 条数据")
+        print(f"    前 5 条示例: {furnace_data[:5]}")
+        
+        # 使用 executemany 高效执行批量插入
+        cursor.executemany(insert_furnace_query, furnace_data)
+        
+        # 提交事务
+        conn.commit()
+        
+        print(f"✅ 完成! {cursor.rowcount} 条新的固化炉数据被插入。")
+        print("    (如果数字为0，说明所有固化炉已存在于数据库中，这也是正常的)")
         print("\n🎉 数据库初始数据填充完毕！")
 
-    except mysql.connector.Error as err:
+    except pymysql.Error as err:
         print(f"❌ 数据库连接或操作失败: {err}")
-        print("   请仔细检查您的 .env 文件中的数据库地址、用户名、密码、数据库名是否正确，以及IP白名单是否已配置。")
+        print("    请仔细检查您的 .env 文件中的数据库地址、用户名、密码、数据库名是否正确，以及IP白名单是否已配置。")
         traceback.print_exc()
+        sys.exit(1)
+        
+    except Exception as e:
+        print(f"❌ 发生未知错误: {e}")
+        traceback.print_exc()
+        sys.exit(1)
+
     finally:
-        if db_conn and db_conn.is_connected():
-            cursor.close()
-            db_conn.close()
-            print("🔌 数据库连接已关闭。")
+        if conn:
+            conn.close()
+            print("🔒 数据库连接已关闭")
+
 
 if __name__ == "__main__":
     main()
-    
