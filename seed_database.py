@@ -1,10 +1,10 @@
+import pymysql
 import os
 import sys
-import traceback
-import pymysql
 from dotenv import load_dotenv
+import traceback
 
-# 这是您所有固化炉的“主列表”（来自代码2）。
+# 这是您所有固化炉的“主列表”。
 # 这个脚本的唯一目的，就是将这个列表一次性地导入到您的数据库中。
 FURNACES = [
     "A02", "A06", "A07", "A10", "A11", "A12", "A13", "A14", "A15", "A16", "A18", "A21", "A22", "A24", "A25", "A27", "A29",
@@ -15,70 +15,45 @@ FURNACES = [
 
 def main():
     """
-    主函数，用于连接数据库并批量填充固化炉主数据。
+    主函数，用于连接数据库并填充固化炉主数据。
     这是一个【一次性】的设置脚本，只需成功运行一次即可。
-    本脚本使用 pymysql 库。
     """
-    print("🎯 main() 已调用")
-
-    # 加载环境变量
-    try:
-        load_dotenv()
-        print("✅ .env 文件已加载")
-    except Exception as e:
-        print(f"❌ .env 文件加载失败: {e}")
-        # 即使加载失败也继续，允许从系统环境变量中读取
-    
-    # 从环境变量读取数据库配置
-    DB_HOST = os.getenv("DB_HOST")
-    DB_PORT = int(os.getenv("DB_PORT", "3306"))
-    DB_USER = os.getenv("DB_USER")
-    DB_PASSWORD = os.getenv("DB_PASSWORD")
-    DB_NAME = os.getenv("DB_NAME")
-
-    print("📌 数据库配置:")
-    print(f"    HOST: {DB_HOST}:{DB_PORT}")
-    print(f"    USER: {DB_USER}")
-    print(f"    DB  : {DB_NAME}")
-
     conn = None
     try:
-        # 建立数据库连接
-        print("📌 即将连接数据库...")
+        # --- 配置和数据库连接 (已修改) ---
+        load_dotenv()
+        print("✅ .env 文件已加载")
+        
+        DB_HOST = os.getenv("DB_HOST")
+        DB_PORT = int(os.getenv("DB_PORT", "3306"))
+        DB_USER = os.getenv("DB_USER")
+        DB_PASSWORD = os.getenv("DB_PASSWORD")
+        DB_NAME = os.getenv("DB_NAME")
+
+        print("📌 即将连接的数据库信息:")
+        print(f"    HOST: {DB_HOST}:{DB_PORT}")
+        print(f"    USER: {DB_USER}")
+        print(f"    DB  : {DB_NAME}")
+
         conn = pymysql.connect(
             host=DB_HOST,
-            port=DB_PORT,
             user=DB_USER,
             password=DB_PASSWORD,
             database=DB_NAME,
+            port=DB_PORT,
             charset="utf8mb4"
         )
+        cursor = conn.cursor()
         print("✅ 数据库连接成功!")
 
-        cursor = conn.cursor()
-
-        # 确保 furnaces 表存在，如果不存在则创建
-        # 注意：实际生产中，表结构通常由迁移工具（如Alembic）管理，这里为了脚本独立性而包含此步骤。
-        print("📌 正在检查 `furnaces` 表...")
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS furnaces (
-                id INT AUTO_INCREMENT PRIMARY KEY,
-                name VARCHAR(100) NOT NULL UNIQUE
-            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
-        """)
-        print("✅ 表 `furnaces` 创建/已存在")
-
-        # 填充固化炉主数据
-        print("📌 正在填充固化炉主数据...")
+        # --- 核心业务逻辑 (基本无变化) ---
+        print("正在填充固化炉主数据...")
         
-        # 使用 INSERT IGNORE 来避免因重复数据导致错误，使脚本可重复运行
+        # 使用 INSERT IGNORE 来避免因重复数据导致错误
         insert_furnace_query = "INSERT IGNORE INTO furnaces (name) VALUES (%s)"
         
         # 将列表转换为 executemany 需要的元组列表格式
         furnace_data = [(name,) for name in FURNACES]
-        
-        print(f"    即将插入 {len(furnace_data)} 条数据")
-        print(f"    前 5 条示例: {furnace_data[:5]}")
         
         # 使用 executemany 高效执行批量插入
         cursor.executemany(insert_furnace_query, furnace_data)
@@ -90,7 +65,7 @@ def main():
         print("    (如果数字为0，说明所有固化炉已存在于数据库中，这也是正常的)")
         print("\n🎉 数据库初始数据填充完毕！")
 
-    except pymysql.Error as err:
+    except pymysql.Error as err: # <-- 修改点
         print(f"❌ 数据库连接或操作失败: {err}")
         print("    请仔细检查您的 .env 文件中的数据库地址、用户名、密码、数据库名是否正确，以及IP白名单是否已配置。")
         traceback.print_exc()
@@ -102,10 +77,10 @@ def main():
         sys.exit(1)
 
     finally:
-        if conn:
+        if conn: # <-- 修改点
+            cursor.close()
             conn.close()
-            print("🔒 数据库连接已关闭")
-
+            print("🔌 数据库连接已关闭。")
 
 if __name__ == "__main__":
     main()
