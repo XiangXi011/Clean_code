@@ -20,20 +20,18 @@ def add_result():
         return jsonify({"success": False, "error": "所有测量值均不能为空"}), 400
 
     try:
-        # 插入新结果
+        current_time = datetime.datetime.now()
+        
         insert_query = """
             INSERT INTO results (task_id, furnace_id, measure_time, value_03, value_05, value_50)
             VALUES (%s, %s, %s, %s, %s, %s)
         """
-        current_time = datetime.datetime.now()
         commit_db(insert_query, (task_id, furnace_id, current_time, value_03, value_05, value_50))
 
-        # 如果是日常任务，更新任务状态
         if task_id:
             update_task_query = "UPDATE daily_tasks SET status = '已完成' WHERE task_id = %s"
             commit_db(update_task_query, (task_id,))
         
-        # 如果是固化炉任务，更新固化炉的最后测量时间
         if furnace_id:
             update_furnace_query = "UPDATE furnaces SET last_measured = %s WHERE furnace_id = %s"
             commit_db(update_furnace_query, (current_time, furnace_id))
@@ -45,23 +43,44 @@ def add_result():
 
 @results_bp.route("/<int:result_id>", methods=['DELETE'])
 def delete_result(result_id):
-    """根据ID删除一条测量记录"""
+    """根据ID删除一条测量记录, 并智能回滚关联任务的状态"""
     try:
-        # 在删除前，先检查记录是否存在
+        # 在删除前，先获取关联的 task_id 和 furnace_id
         check_query = "SELECT task_id, furnace_id FROM results WHERE result_id = %s"
-        result = query_db(check_query, (result_id,), one=True)
+        result_to_delete = query_db(check_query, (result_id,), one=True)
 
-        if not result:
+        if not result_to_delete:
             return jsonify({"success": False, "error": "记录未找到"}), 404
 
         # 执行删除操作
         delete_query = "DELETE FROM results WHERE result_id = %s"
         commit_db(delete_query, (result_id,))
 
-        # 注意：这里我们简化处理，不自动将关联的 daily_tasks 状态重置为“待测量”
-        # 因为这可能不是期望的行为（例如，可能只是想删除一条错误的重复记录）
+        # Case 1: 如果关联的是日常任务，则重置其状态
+        associated_task_id = result_to_delete.get('task_id')
+        if associated_task_id:
+            reset_task_query = "UPDATE daily_tasks SET status = '待测量' WHERE task_id = %s"
+            commit_db(reset_task_query, (associated_task_id,))
+            print(f"Task ID {associated_task_id} status has been reset to '待测量'.")
         
-        return jsonify({"success": True, "message": "记录已删除"})
+        # Case 2: 如果关联的是固化炉，则回滚其 last_measured 时间
+        associated_furnace_id = result_to_delete.get('furnace_id')
+        if associated_furnace_id:
+            # 查找删除后，该固化炉最新的一次测量记录
+            latest_measurement_query = """
+                SELECT MAX(measure_time) as new_last_measured 
+                FROM results 
+                WHERE furnace_id = %s
+            """
+            newest_record = query_db(latest_measurement_query, (associated_furnace_id,), one=True)
+            
+            new_last_measured = newest_record.get('new_last_measured') if newest_record else None
+            
+            # 更新 furnaces 表
+            update_furnace_query = "UPDATE furnaces SET last_measured = %s WHERE furnace_id = %s"
+            commit_db(update_furnace_query, (new_last_measured, associated_furnace_id))
+
+        return jsonify({"success": True, "message": "记录已删除，关联状态已回滚"})
     except Exception as e:
         print(f"--- DELETE RESULT ERROR --- \n{traceback.format_exc()} \n--- END ERROR ---")
         return jsonify({"success": False, "error": f"数据库操作失败: {e}"}), 500

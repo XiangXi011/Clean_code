@@ -64,7 +64,7 @@
     <div id="toast" class="fixed top-5 right-5 text-white py-2 px-4 rounded-lg shadow-lg hidden toast-enter max-w-sm">
         <div class="flex items-center"><i data-lucide="check-circle" class="w-5 h-5 mr-2 flex-shrink-0"></i><span id="toast-message" class="break-words"></span></div>
     </div>
-
+    
     <!-- Deletion Confirmation Modal -->
     <div id="confirm-modal" class="fixed inset-0 bg-black bg-opacity-60 flex items-center justify-center p-4 z-50 hidden modal-enter">
         <div class="bg-white rounded-lg shadow-xl w-full max-w-sm p-6">
@@ -76,6 +76,7 @@
             </div>
         </div>
     </div>
+
 
     <script>
     document.addEventListener('DOMContentLoaded', () => {
@@ -165,7 +166,7 @@
                             </div>
                             <div class="ml-4">
                                 <h2 class="text-lg font-semibold text-gray-800">今日任务进度</h2>
-                                <p class="text-sm text-gray-500">常规测量点任务</p>
+                                <p class="text-sm text-gray-500">所有计划内任务</p>
                             </div>
                         </div>
                         <div class="mt-4">
@@ -202,37 +203,36 @@
             `;
         };
 
-        const renderPlanView = async () => {
+       const renderPlanView = async () => {
             const summary = await api.get('/api/tasks/summary');
             const { furnace_summary, other_tasks } = summary;
-
-            if (other_tasks.length === 0 && furnace_summary.total === 0) {
-                return createEmptyStateHTML('今日所有计划已全部完成！');
-            }
-
+            
             let content = '<h2 class="text-lg font-semibold text-gray-700 mb-4">今日计划</h2>';
 
-            if (furnace_summary.total > 0) {
-                content += `
-                    <div class="bg-gray-50 border border-dashed rounded-lg p-3 mb-6">
-                        <div class="flex items-center">
-                            <div class="mr-4 text-green-500 flex-shrink-0">
-                                <i data-lucide="box" class="w-6 h-6"></i>
-                            </div>
-                            <div class="truncate">
-                                <p class="font-semibold text-gray-800 truncate">今日固化炉计划: ${furnace_summary.total} 台</p>
-                                <p class="text-sm text-gray-500">已完成: ${furnace_summary.completed} 台 (请在“固化炉”页面操作)</p>
-                            </div>
+            // 始终显示固化炉板块
+            content += `
+                <div class="bg-gray-50 border border-dashed rounded-lg p-3 mb-6">
+                    <div class="flex items-center">
+                        <div class="mr-4 text-green-500 flex-shrink-0">
+                            <i data-lucide="box" class="w-6 h-6"></i>
+                        </div>
+                        <div class="truncate">
+                            <p class="font-semibold text-gray-800 truncate">今日固化炉计划: ${furnace_summary.total} 台</p>
+                            <p class="text-sm text-gray-500">已完成: ${furnace_summary.completed} 台 (请在“固化炉”页面操作)</p>
                         </div>
                     </div>
-                `;
-            }
-
+                </div>
+            `;
+            
             content += '<h3 class="text-md font-semibold text-gray-600 mb-3">常规测量点任务</h3>';
+            
             if (other_tasks.length > 0) {
                 content += `<ul class="space-y-3">${other_tasks.map(createTaskItemHTML).join('')}</ul>`;
             } else {
                 content += createEmptyStateHTML('今日常规测量点已全部完成！');
+            }
+             if (other_tasks.length === 0 && furnace_summary.total === furnace_summary.completed) {
+                return createEmptyStateHTML('今日所有计划已全部完成！');
             }
 
             return content;
@@ -409,7 +409,6 @@
                 closeConfirmModal();
             });
 
-
             elements.mainContent.addEventListener('click', (e) => {
                 const recordBtn = e.target.closest('.record-btn');
                 if (recordBtn && !recordBtn.disabled) {
@@ -423,7 +422,7 @@
                 if (queryBtn) {
                     handleHistoryQuery();
                 }
-                 const deleteBtn = e.target.closest('.delete-btn');
+                const deleteBtn = e.target.closest('.delete-btn');
                 if (deleteBtn) {
                     const resultId = deleteBtn.dataset.resultId;
                     handleDeleteResult(resultId);

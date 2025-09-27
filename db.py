@@ -1,25 +1,17 @@
 import pymysql
-from flask import g
+from flask import current_app, g
 from config import Config
-import sys
-import traceback
 
 def get_db():
-    """获取数据库连接 (使用 PyMySQL)"""
+    """获取数据库连接"""
     if 'db' not in g:
-        try:
-            g.db = pymysql.connect(
-                host=Config.MYSQL_HOST,
-                user=Config.MYSQL_USER,
-                password=Config.MYSQL_PASSWORD,
-                database=Config.MYSQL_DB,
-                connect_timeout=10,
-                cursorclass=pymysql.cursors.DictCursor  # 使查询结果返回字典
-            )
-        except pymysql.Error as err:
-            print(f"数据库连接失败: {err}", file=sys.stderr)
-            traceback.print_exc()
-            return None
+        g.db = pymysql.connect(
+            host=Config.MYSQL_HOST,
+            user=Config.MYSQL_USER,
+            password=Config.MYSQL_PASSWORD,
+            database=Config.MYSQL_DB,
+            cursorclass=pymysql.cursors.DictCursor
+        )
     return g.db
 
 def close_db(e=None):
@@ -28,30 +20,31 @@ def close_db(e=None):
     if db is not None:
         db.close()
 
-def query_db(query, args=(), one=False, commit=False):
-    """执行数据库查询的辅助函数"""
+def query_db(query, args=(), one=False):
+    """执行数据库查询 (SELECT)"""
     db = get_db()
-    if db is None:
-        raise ConnectionError("无法连接到数据库")
-        
+    cursor = db.cursor()
+    cursor.execute(query, args)
+    rv = cursor.fetchall()
+    cursor.close()
+    return (rv[0] if rv else None) if one else rv
+
+def commit_db(query, args=()):
+    """执行数据库操作 (INSERT, UPDATE, DELETE)并提交"""
+    db = get_db()
     cursor = db.cursor()
     try:
         cursor.execute(query, args)
-        if commit:
-            db.commit()
-            return cursor.lastrowid
-        
-        rv = cursor.fetchall()
-        return (rv[0] if rv else None) if one else rv
-    except pymysql.Error as err:
-        print(f"数据库查询失败: {err}", file=sys.stderr)
-        print(f"查询语句: {query} \n参数: {args}", file=sys.stderr)
+        db.commit()
+        return cursor.lastrowid or cursor.rowcount
+    except Exception as e:
         db.rollback()
-        raise
+        print(f"Database execution failed: {e}")
+        raise e
     finally:
         cursor.close()
 
 def init_app(app):
-    """在Flask应用实例上注册数据库关闭函数"""
+    """初始化应用，注册数据库关闭函数"""
     app.teardown_appcontext(close_db)
 
