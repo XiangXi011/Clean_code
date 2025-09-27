@@ -1,4 +1,4 @@
-Flask
-mysql-connector-python
-Flask-Cors
-python-dotenv
+Flask>=2.0
+Flask-Cors>=3.0
+PyMySQL>=1.0
+python-dotenv>=0.19

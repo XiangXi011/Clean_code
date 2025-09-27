@@ -1,76 +1,79 @@
 from flask import Blueprint, jsonify
 from db import query_db
 import traceback
-import datetime
 
-tasks_bp = Blueprint('tasks_bp', __name__)
+tasks_bp = Blueprint('tasks_bp', __name__, url_prefix='/api/tasks')
 
-# 复制一份每日计划，以便在此处引用
-WEEKLY_PLAN = {
-    0: {"types": ["层流棚"], "furnace_count": 7},
-    1: {"types": ["加硬机"], "furnace_count": 8},
-    2: {"types": ["大环境"], "furnace_count": 8},
-    3: {"types": ["层流棚"], "furnace_count": 7},
-    4: {"types": ["加硬机", "大环境"], "furnace_count": 0},
-    5: {"types": ["大环境"], "furnace_count": 14},
-    6: {"types": [], "furnace_count": 0},
-}
-
-@tasks_bp.route("/api/tasks/pending", methods=['GET'])
+@tasks_bp.route('/pending', methods=['GET'])
 def get_pending_tasks():
+    """获取所有待办的日常任务，按类型和点位排序"""
     try:
-        # 1. 获取所有非固化炉的待办任务
-        query = "SELECT task_id, location_type, point_name, status FROM daily_tasks WHERE measure_date = CURDATE() AND status = '待测量' ORDER BY location_type, point_name"
-        tasks = query_db(query)
-
-        # 2. 计算今天固化炉的计划和完成情况
-        today = datetime.date.today()
-        weekday = today.weekday()
-        plan = WEEKLY_PLAN.get(weekday, {"furnace_count": 0})
-        furnace_plan_count = plan.get("furnace_count", 0)
-
-        if furnace_plan_count > 0:
-            furnace_completed_query = """
-                SELECT COUNT(*) as completed 
-                FROM results r
-                JOIN furnaces f ON r.furnace_id = f.furnace_id
-                WHERE DATE(r.measure_time) = CURDATE()
-            """
-            completed_result = query_db(furnace_completed_query, one=True)
-            furnace_completed_count = completed_result['completed'] if completed_result else 0
-            
-            # 3. 创建一个摘要任务项并添加到任务列表
-            furnace_summary_task = {
-                "task_id": "furnace_summary",
-                "is_summary": True, # 添加一个特殊标记
-                "location_type": "固化炉",
-                "point_name": f"今日计划: {furnace_plan_count} 台",
-                "status": f"已完成: {furnace_completed_count} 台"
-            }
-            tasks.append(furnace_summary_task)
-
-        return jsonify(tasks)
+        query_str = """
+            SELECT task_id, point_name, location_type, status 
+            FROM daily_tasks 
+            WHERE status = '待测量' AND DATE(measure_date) = CURDATE()
+            ORDER BY location_type, point_name;
+        """
+        tasks = query_db(query_str)
+        # 将数据库字段映射为前端期望的字段
+        formatted_tasks = [
+            {'task_id': t['task_id'], 'point_name': t['point_name'], 'type': t['location_type'], 'is_completed': False}
+            for t in tasks
+        ]
+        return jsonify(formatted_tasks)
     except Exception as e:
-        error_message = f"获取今日待办任务失败: {str(e)}"
-        print(f"--- TASKS PENDING ERROR --- \n{traceback.format_exc()} \n--- END ERROR ---")
-        return jsonify({"error": error_message}), 500
+        print(f"--- PENDING TASKS ERROR --- \n{traceback.format_exc()} \n--- END ERROR ---")
+        return jsonify({"error": f"获取待办任务失败: {e}"}), 500
 
-# record_task_result 函数保持不变，因为它只处理带 task_id 的常规任务
-@tasks_bp.route("/api/tasks/<int:task_id>/record", methods=['POST'])
-def record_task_result(task_id):
-    # ... 此函数代码与您提供的版本完全相同，无需修改 ...
-    data = request.get_json()
-    if not data or 'value_03' not in data or 'value_05' not in data or 'value_50' not in data:
-        return jsonify({"error": "请求数据不完整"}), 400
+@tasks_bp.route('/summary', methods=['GET'])
+def get_tasks_summary():
+    """获取今日计划的摘要信息，包括固化炉统计和常规任务列表"""
     try:
-        update_query = "UPDATE daily_tasks SET status = '已完成' WHERE task_id = %s"
-        query_db(update_query, (task_id,), commit=True)
-        insert_query = "INSERT INTO results (task_id, measure_time, value_03, value_05, value_50, operator) VALUES (%s, NOW(), %s, %s, %s, %s)"
-        params = (task_id, data['value_03'], data['value_05'], data['value_50'], data.get('operator', 'default_user'))
-        query_db(insert_query, params, commit=True)
-        return jsonify({"message": f"成功记录任务 {task_id} 的测量结果"}), 201
+        # 1. 获取所有今日待办任务
+        pending_query = """
+            SELECT task_id, point_name, location_type
+            FROM daily_tasks 
+            WHERE status = '待测量' AND DATE(measure_date) = CURDATE();
+        """
+        pending_tasks = query_db(pending_query)
+
+        # 2. 获取今日已完成的任务 (从 results 表反查)
+        completed_query = """
+            SELECT dt.task_id, dt.point_name, dt.location_type
+            FROM results r
+            JOIN daily_tasks dt ON r.task_id = dt.task_id
+            WHERE DATE(r.measure_time) = CURDATE();
+        """
+        completed_tasks_today = query_db(completed_query)
+        completed_task_ids = {t['task_id'] for t in completed_tasks_today}
+
+        # 分类任务
+        pending_furnace_tasks = [t for t in pending_tasks if t['location_type'] == '固化炉']
+        completed_furnace_tasks_today = [t for t in completed_tasks_today if t['location_type'] == '固化炉']
+        
+        # 筛选出未完成的常规任务
+        other_pending_tasks = [
+            t for t in pending_tasks 
+            if t['location_type'] != '固化炉' and t['task_id'] not in completed_task_ids
+        ]
+
+        # 格式化常规任务列表
+        formatted_other_tasks = [
+            {'task_id': t['task_id'], 'point_name': t['point_name'], 'type': t['location_type'], 'is_completed': False}
+            for t in other_pending_tasks
+        ]
+
+        # 构建摘要
+        summary = {
+            "furnace_summary": {
+                "total": len(pending_furnace_tasks) + len(completed_furnace_tasks_today),
+                "completed": len(completed_furnace_tasks_today)
+            },
+            "other_tasks": formatted_other_tasks
+        }
+        
+        return jsonify(summary)
     except Exception as e:
-        error_message = f"记录任务结果失败: {str(e)}"
-        print(f"--- TASK RECORD ERROR --- \n{traceback.format_exc()} \n--- END ERROR ---")
-        return jsonify({"error": error_message}), 500
+        print(f"--- TASKS SUMMARY ERROR --- \n{traceback.format_exc()} \n--- END ERROR ---")
+        return jsonify({"error": f"获取任务摘要失败: {e}"}), 500
 
